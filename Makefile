@@ -4,5 +4,9 @@ SRCDIR = src
 INCDIR = include
 BINDIR = bin
 
-$(BINDIR)/ejemplo_Draw: $(SRCDIR)/ejemplo_Draw.cpp
+$(BINDIR)/ejemplo_Draw: $(SRCDIR)/ejemplo_Draw.cpp | $(BINDIR)
 	$(CXX) $(SRCDIR)/ejemplo_Draw.cpp -o $@ $(OPEN3D_LIBS)
+
+$(BINDIR):
+	mkdir -p $(BINDIR)
+
