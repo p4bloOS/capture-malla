@@ -18,6 +18,12 @@ Draw: $(EXAMPLES_DIR)/Draw.cpp | $(BINDIR)
 RealSenseBagReader: $(EXAMPLES_DIR)/RealSenseBagReader.cpp | $(BINDIR)
 	$(CXX) $(EXAMPLES_DIR)/RealSenseBagReader.cpp -o $(BINDIR)/RealSenseBagReader $(OPEN3D_LIBS) $(JSON_LIB)
 
+Visualizer: $(EXAMPLES_DIR)/Visualizer.cpp | $(BINDIR)
+	$(CXX) $(EXAMPLES_DIR)/Visualizer.cpp -o $(BINDIR)/Visualizer $(OPEN3D_LIBS)
+
+MultipleWindows: $(EXAMPLES_DIR)/MultipleWindows.cpp | $(BINDIR)
+	$(CXX) $(EXAMPLES_DIR)/MultipleWindows.cpp  -o $(BINDIR)/MultipleWindows $(OPEN3D_LIBS)
+
 $(BINDIR):
 	mkdir -p $(BINDIR)
 
