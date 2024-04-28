@@ -1,10 +1,12 @@
 #include "open3d/Open3D.h"
 #include <json/json.h>
 #include <open3d/geometry/Image.h>
-#include <open3d/io/ImageIO.h>
 #include <open3d/utility/IJsonConvertible.h>
 #include <open3d/visualization/gui/GLFWWindowSystem.h>
 #include <open3d/visualization/gui/Window.h>
+#include <tinyfiledialogs.h>
+#include <cstring>
+
 
 void realsenseRecord() {
     using namespace open3d::t;
@@ -180,6 +182,39 @@ void createGui( ) {
 }
 
 
+/**
+ * Abre un diálogo para solicitar la ruta donde se guardará un archivo ".ply".
+ * Retorna la ruta elegida, o cadena vacía si el usuario ha cancelado.
+ */
+std::string requestFileToSave() {
+
+    const char * filterPatterns[2] = {"*.ply", "*.PLY"};
+    char const *filePath = tinyfd_saveFileDialog("Elige el archivo que guardar", "", 2,
+        filterPatterns, NULL);
+    if (filePath == nullptr) {
+        std::cout << "Guardado de archivo cancelado." << std::endl;
+        return "";
+    }
+
+
+    std::string filePathCorrected;
+    size_t path_len = strlen(filePath);
+    if ( path_len < 4)
+    {
+        filePathCorrected = std::string(filePath) + ".ply";
+    }
+    else {
+        const char *suffix = filePath + path_len - 4;
+        if (strcmp(suffix, ".ply") == 0 || strcmp(suffix, ".PLY") == 0) {
+            filePathCorrected = filePath;
+        } else {
+            filePathCorrected = filePath + std::string(".ply");
+        };
+    };
+    std::cout << "Ruta para guardar el archivo: " << filePathCorrected << std::endl;
+    return filePathCorrected;
+
+}
 
 
 int main(int argc, char *argv[]) {
@@ -187,6 +222,7 @@ int main(int argc, char *argv[]) {
     // realsenseRecord();
     // readBagFile();
     // visualizeMesh();
-    createGui();
+    // createGui();
+    requestFileToSave();
     return 0;
 }
