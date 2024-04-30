@@ -1,6 +1,7 @@
 #include "open3d/Open3D.h"
 #include <json/json.h>
 #include <open3d/geometry/Image.h>
+#include <open3d/io/ImageIO.h>
 #include <open3d/utility/IJsonConvertible.h>
 #include <open3d/visualization/gui/GLFWWindowSystem.h>
 #include <open3d/visualization/gui/Window.h>
@@ -61,7 +62,19 @@ void readBagFile() {
 
     bool is_geometry_added = false;
     auto im_rgbd = bag_reader.NextFrame().ToLegacy();
+
+    int frameNum = 0;
     while (!bag_reader.IsEOF() && !flag_exit) {
+        frameNum ++;
+        // Guardamos un fotograma para hacer pruebas:
+        if (frameNum == 45) {
+            const std::string colorFileName = "../archivos/color_image.png";
+            const std::string depthFileName = "../archivos/depth_image.png";
+            io::WriteImage(colorFileName, im_rgbd.color_);
+            io::WriteImage(depthFileName, im_rgbd.depth_);
+        }
+        //im_rgbd.depth_;
+
         // process im_rgbd.depth_ and im_rgbd.color_
 
         // create shared_ptr with no-op deleter for stack RGBDImage
@@ -220,9 +233,9 @@ std::string requestFileToSave() {
 int main(int argc, char *argv[]) {
     open3d::t::io::RealSenseSensor::ListDevices();
     // realsenseRecord();
-    // readBagFile();
+    readBagFile();
     // visualizeMesh();
     // createGui();
-    requestFileToSave();
+    // requestFileToSave();
     return 0;
 }

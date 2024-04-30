@@ -35,6 +35,9 @@ Visualizer: $(EXAMPLES_DIR)/Visualizer.cpp
 MultipleWindows: $(EXAMPLES_DIR)/MultipleWindows.cpp
 	$(CXX) $(EXAMPLES_DIR)/MultipleWindows.cpp  -o $(BINDIR)/MultipleWindows $(OPEN3D_LIBS)
 
+TOdometryRGBD: $(EXAMPLES_DIR)/TOdometryRGBD.cpp
+	$(CXX) $(EXAMPLES_DIR)/TOdometryRGBD.cpp -o $(BINDIR)/TOdometryRGBD $(OPEN3D_LIBS)
+
 
 
 $(BINDIR):
