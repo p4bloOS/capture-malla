@@ -6,21 +6,22 @@ INCDIR = include
 BINDIR = bin
 EXAMPLES_DIR = src/examples
 
-.PHONY: $(BINDIR)/ejemplo_Draw
-
-
 
 $(BINDIR)/capture-malla: $(SRCDIR)/capture-malla.cpp $(BINDIR)/tinyfiledialogs.o
 	$(CXX) $(SRCDIR)/capture-malla.cpp $(BINDIR)/tinyfiledialogs.o -o $@ $(OPEN3D_LIBS) $(JSON_LIB) -I./$(INCDIR)
 
 
-
 $(BINDIR)/tinyfiledialogs.o: $(INCDIR)/tinyfiledialogs.c $(INCDIR)/tinyfiledialogs.h | $(BINDIR)
 	$(CXX) -c $(INCDIR)/tinyfiledialogs.c -o $(BINDIR)/tinyfiledialogs.o
 
+$(BINDIR):
+	mkdir -p $(BINDIR)
+
+
+
+
 FileDialog: $(EXAMPLES_DIR)/FileDialog.cpp $(BINDIR)/tinyfiledialogs.o $(INCDIR)/tinyfiledialogs.h
 	$(CXX) $(EXAMPLES_DIR)/FileDialog.cpp $(BINDIR)/tinyfiledialogs.o -o $(BINDIR)/FileDialog $(OPEN3D_LIBS) -I./$(INCDIR)
-
 
 
 Draw: $(EXAMPLES_DIR)/Draw.cpp
@@ -39,7 +40,4 @@ TOdometryRGBD: $(EXAMPLES_DIR)/TOdometryRGBD.cpp
 	$(CXX) $(EXAMPLES_DIR)/TOdometryRGBD.cpp -o $(BINDIR)/TOdometryRGBD $(OPEN3D_LIBS)
 
 
-
-$(BINDIR):
-	mkdir -p $(BINDIR)
 

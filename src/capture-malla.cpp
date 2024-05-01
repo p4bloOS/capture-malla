@@ -1,7 +1,12 @@
 #include "open3d/Open3D.h"
+#include <GLFW/glfw3.h>
 #include <json/json.h>
 #include <open3d/geometry/Image.h>
+#include <open3d/geometry/PointCloud.h>
+#include <open3d/geometry/RGBDImage.h>
 #include <open3d/io/ImageIO.h>
+#include <open3d/t/io/ImageIO.h>
+#include <open3d/utility/Helper.h>
 #include <open3d/utility/IJsonConvertible.h>
 #include <open3d/visualization/gui/GLFWWindowSystem.h>
 #include <open3d/visualization/gui/Window.h>
@@ -9,15 +14,19 @@
 #include <cstring>
 
 
+/*
+ * Produce una grabación usando la cámara Intel RealSense. Grabará 2 segundos (60 fotogramas), y
+ * el resultado se almacena un archivo ".bag", el cual contendrá datos de color y profundidad.
+ * */
 void realsenseRecord() {
     using namespace open3d::t;
     std::unordered_map<std::string, std::string> configValues =
     {
         {"serial", ""}, // Se escoge el primer dispositivo disponible
         {"color_format", "RS2_FORMAT_ANY"}, // Formato de pixel para fotogramas de color
-        {"color_resolution", "1920,1080"}, // RealSense escogerá la resolución
+        {"color_resolution", "1920,1080"},
         {"depth_format", "RS2_FORMAT_ANY"}, // Formato de pixel para fotogramas de profundidad
-        {"depth_resolution", "640,480"}, // RealSense escogerá la resolución
+        {"depth_resolution", "640,480"},
         {"fps", "30"}, // Tasa de fotogramas para color y profundidad
         {"visual_preset", ""} // Preset por defecto
     };
@@ -103,11 +112,19 @@ void readBagFile() {
 }
 
 
+
+/*
+ * Visualiza una malla 3D que se se encuentra en un archivo con un formato de malla 3D válido,
+ * en este caso PLY.
+ */
 void visualizeMesh() {
 
     using namespace open3d;
+
+    // Open3D gestiona la visualización de una geometría mediante un puntero compartido (shared_ptr)
+    // que apunta a dicha geometría
     auto mesh_ptr = std::make_shared<geometry::TriangleMesh>();
-    const std::string meshFilename = "../archivos/foto_3d_pablo.ply";
+    const std::string meshFilename = "../archivos/malla_de_prueba.ply";
     if (io::ReadTriangleMesh(meshFilename, *mesh_ptr)) {
         utility::LogInfo("Malla leída correctamente: {}", meshFilename);
     } else {
@@ -115,6 +132,8 @@ void visualizeMesh() {
         return;
     }
     mesh_ptr->ComputeVertexNormals();
+
+    // Se lanza la visualización en una ventana:
     visualization::DrawGeometries({mesh_ptr}, "Malla");
 
 }
@@ -230,12 +249,91 @@ std::string requestFileToSave() {
 }
 
 
+void instantCapture() {
+    using namespace open3d;
+
+    // Apertura de la RealSense
+    std::unordered_map<std::string, std::string> configValues =
+    {
+        {"serial", ""}, // Se escoge el primer dispositivo disponible
+        {"color_format", "RS2_FORMAT_ANY"}, // Formato de pixel para fotogramas de color
+        {"color_resolution", "0,0"}, // RealSense escogerá la resolución (la máxima)
+        {"depth_format", "RS2_FORMAT_ANY"}, // Formato de pixel para fotogramas de profundidad
+        {"depth_resolution", "0,0"}, // RealSense escogerá la resolución (la máxima)
+        {"fps", "30"}, // Tasa de fotogramas para color y profundidad
+        {"visual_preset", "RS2_SR300_VISUAL_PRESET_OBJECT_SCANNING"} // Preset por optimizado para el escaneo
+    };
+    t::io::RealSenseSensor rs;
+    rs.InitSensor(t::io::RealSenseSensorConfig(configValues), 0);
+    auto metadata = rs.GetMetadata();
+    rs.StartCapture();
+
+
+    // CREACIÓN DE LA VENTANA
+    visualization::VisualizerWithKeyCallback vis;
+    visualization::SetGlobalColorMap(
+            visualization::ColorMap::ColorMapOption::Gray);
+    bool flag_exit = false;
+    vis.RegisterKeyCallback(GLFW_KEY_ESCAPE,
+                            [&](visualization::Visualizer *vis) {
+                                flag_exit = true;
+                                return true;
+                            });
+    vis.CreateVisualizerWindow("Instant Capture");
+    bool flag_capture;
+    vis.RegisterKeyCallback(GLFW_KEY_ENTER,
+                            [&](visualization::Visualizer *vis) {
+                                flag_capture = true;
+                                return true;
+                            });
+
+
+    // Visualización en tiempo real de la cámara
+    auto imgRGBD = rs.CaptureFrame(true, true).ToLegacy();
+    auto imRGBDPtr = std::shared_ptr<geometry::RGBDImage>(
+            &imgRGBD, [](geometry::RGBDImage *) {});
+    vis.AddGeometry(imRGBDPtr);
+    while(!flag_capture && !flag_exit) {
+        imgRGBD = rs.CaptureFrame(true, true).ToLegacy();
+        vis.UpdateGeometry();
+        vis.UpdateRender();
+        vis.PollEvents();
+    }
+    rs.StopCapture();
+
+    if (flag_exit) return; // Cierre del programa si se ha pulsado ESC
+
+    // Características de la instantánea:
+    std::cout << "Píxeles de color: " << imgRGBD.color_.width_ <<"x"<<imgRGBD.color_.height_ << std::endl;
+    std::cout << "Píxeles de profundidad: " << imgRGBD.depth_.width_ <<"x"<<imgRGBD.depth_.height_ << std::endl;
+
+    // Transformación de la imagen RGBD para que la conversión a nube de puntos funcione
+    // (la imagen de profundidad ha de tener 4 bytes por píxel, por algún motivo que desconozco)
+    auto imgPointCloud = open3d::geometry::RGBDImage::CreateFromColorAndDepth(imgRGBD.color_, imgRGBD.depth_);
+    (*imgPointCloud).color_ = imgRGBD.color_;
+    std::cout << "Número de canales de profundidad: " << (*imgPointCloud).depth_.num_of_channels_ << std::endl;
+    std::cout << "Bytes por canal de profundidad: " << (*imgPointCloud).depth_.bytes_per_channel_ << std::endl;
+
+
+    // Creación de la nube de puntos
+    auto pointCloud = geometry::PointCloud::CreateFromRGBDImage(*imgPointCloud, metadata.intrinsics_);
+    visualization::DrawGeometries({pointCloud}, "Nube de puntos");
+
+
+}
+
+
+
+
+
+
 int main(int argc, char *argv[]) {
     open3d::t::io::RealSenseSensor::ListDevices();
     // realsenseRecord();
-    readBagFile();
+    // readBagFile();
     // visualizeMesh();
     // createGui();
     // requestFileToSave();
+    instantCapture();
     return 0;
 }
