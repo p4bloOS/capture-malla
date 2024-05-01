@@ -1,7 +1,12 @@
 #include "open3d/Open3D.h"
 #include <GLFW/glfw3.h>
+#include <open3d/geometry/PointCloud.h>
+#include <open3d/geometry/RGBDImage.h>
+#include <open3d/geometry/TriangleMesh.h>
+#include <open3d/io/PointCloudIO.h>
 #include <tinyfiledialogs.h>
 #include <cstring>
+#include <numeric>
 
 
 /*
@@ -240,6 +245,75 @@ std::string requestFileToSave() {
 }
 
 
+/**
+ * Retorna un shared_ptr a una nube de puntos que se crea a partir de la imagen RGBD,
+ * teniendo en cuenta las características de la cámara.
+ */
+std::shared_ptr<open3d::geometry::PointCloud> createPointCloudFromRGBD(
+    open3d::geometry::RGBDImage & imgRGBD,
+    open3d::t::io::RGBDVideoMetadata & metadata
+)
+{
+    using namespace open3d;
+
+    std::cout << "---> Creando nube de puntos a partir de imagen RGBD" << std::endl;
+    // Características de la instantánea:
+    std::cout << "Píxeles de color: " << imgRGBD.color_.width_ <<"x"<<imgRGBD.color_.height_ << std::endl;
+    std::cout << "Píxeles de profundidad: " << imgRGBD.depth_.width_ <<"x"<<imgRGBD.depth_.height_ << std::endl;
+
+    // Transformación de la imagen RGBD para que la conversión a nube de puntos funcione
+    // (la imagen de profundidad ha de tener 4 bytes por píxel, por algún motivo que desconozco)
+    auto imgPointCloud = open3d::geometry::RGBDImage::CreateFromColorAndDepth(imgRGBD.color_, imgRGBD.depth_);
+    (*imgPointCloud).color_ = imgRGBD.color_;
+    std::cout << "Número de canales de profundidad: " << (*imgPointCloud).depth_.num_of_channels_ << std::endl;
+    std::cout << "Bytes por canal de profundidad: " << (*imgPointCloud).depth_.bytes_per_channel_ << std::endl;
+
+    // Corregimos la orientación del objeto generado
+    Eigen::Matrix4d correctOrientation;
+    correctOrientation << 1, 0, 0, 0,
+                          0,  -1, 0, 0,
+                          0,  0, -1, 0,
+                          0,  0, 0, 1;
+
+    return geometry::PointCloud::CreateFromRGBDImage(*imgPointCloud, metadata.intrinsics_, correctOrientation);
+}
+
+/*
+ * Lanza el algoritmo Poisson para crear una malla 3D a partir de una nube de puntos
+ * (es el que mejor resultado nos ha dado). Se asume que la nube de puntos tiene normales,
+ * La consistencia de las normales afectará a la calidad de la malla resultante.
+ */
+std::shared_ptr<open3d::geometry::TriangleMesh> createMeshFromPointCloud(
+    std::shared_ptr<open3d::geometry::PointCloud> & pointCloud
+)
+{
+    using namespace open3d;
+
+    // Lanzamiento del algoritmo Poisson (parámetro depth por defecto = 8; subirlo puede aumentar la definición)
+    std::cout << "---> Creando malla a partir de una nube de puntos mediante el algoritmo Poisson" << std::endl;
+    auto poissonResult = geometry::TriangleMesh::CreateFromPointCloudPoisson(*(pointCloud));
+    auto malla_ptr = std::get<0>(poissonResult);
+    std::vector<double> densities = std::get<1>(poissonResult);
+
+    // Limpieza de los vértices con baja densidad (han sido creados por pocos puntos de la nube original)
+    // Calculamos el percentil 5 (0.05) de las densidades (será maxDensity), y todos los vértices que queden
+    // por debajo serán eliminados
+    std::cout << "Limpiando vértices de poca densidad" << std::endl;
+    std::vector<double> densitiesCopy(densities);
+    double percentile = 0.05;
+    std::size_t index = static_cast<std::size_t>((densitiesCopy.size() - 1) * percentile);
+    std::nth_element(densitiesCopy.begin(), densitiesCopy.begin() + index, densitiesCopy.end());
+    auto maxDensity = densitiesCopy[index];
+    std::vector<bool> verticesToRemove(densities.size());
+    for (int i = 0; i < densities.size(); i++) {
+        verticesToRemove[i] = densities[i] < maxDensity;
+    }
+    (*malla_ptr).RemoveVerticesByMask(verticesToRemove);
+
+    return malla_ptr;
+
+}
+
 void instantCapture() {
     using namespace open3d;
 
@@ -294,22 +368,27 @@ void instantCapture() {
 
     if (flag_exit) return; // Cierre del programa si se ha pulsado ESC
 
-    // Características de la instantánea:
-    std::cout << "Píxeles de color: " << imgRGBD.color_.width_ <<"x"<<imgRGBD.color_.height_ << std::endl;
-    std::cout << "Píxeles de profundidad: " << imgRGBD.depth_.width_ <<"x"<<imgRGBD.depth_.height_ << std::endl;
+    auto pointCloudPtr = createPointCloudFromRGBD(imgRGBD, metadata);
+    bool writePointCloudSuccess = io::WritePointCloud("../archivos/nube_de_puntos.ply", *pointCloudPtr);
+    if (writePointCloudSuccess) {
+        std::cout << "Nube de puntos guardada" << std::endl;
+    } else {
+        std::cerr << "Error guardando la nube de puntos" << std::endl;
+    }
+    (*pointCloudPtr).EstimateNormals();
+    // (*pointCloud).OrientNormalsConsistentTangentPlane(4); // La mejor orientación de normales, peor es MUY costosa
+    (*pointCloudPtr).OrientNormalsTowardsCameraLocation();
 
-    // Transformación de la imagen RGBD para que la conversión a nube de puntos funcione
-    // (la imagen de profundidad ha de tener 4 bytes por píxel, por algún motivo que desconozco)
-    auto imgPointCloud = open3d::geometry::RGBDImage::CreateFromColorAndDepth(imgRGBD.color_, imgRGBD.depth_);
-    (*imgPointCloud).color_ = imgRGBD.color_;
-    std::cout << "Número de canales de profundidad: " << (*imgPointCloud).depth_.num_of_channels_ << std::endl;
-    std::cout << "Bytes por canal de profundidad: " << (*imgPointCloud).depth_.bytes_per_channel_ << std::endl;
+    auto meshPtr = createMeshFromPointCloud(pointCloudPtr);
 
+    if (io::WriteTriangleMesh("../archivos/malla.ply", *meshPtr)) {
+        std::cout << "Malla bien" <<std::endl;
+    } else {
+        std::cerr << "Malla mal" << std::endl;
+    };
 
-    // Creación de la nube de puntos
-    auto pointCloud = geometry::PointCloud::CreateFromRGBDImage(*imgPointCloud, metadata.intrinsics_);
-    visualization::DrawGeometries({pointCloud}, "Nube de puntos");
-
+    visualization::DrawGeometries({meshPtr}, "Malla");
+    visualization::DrawGeometries({pointCloudPtr}, "Nube de puntos");
 
 }
 
