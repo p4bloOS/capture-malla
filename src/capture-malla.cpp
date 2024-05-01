@@ -1,15 +1,5 @@
 #include "open3d/Open3D.h"
 #include <GLFW/glfw3.h>
-#include <json/json.h>
-#include <open3d/geometry/Image.h>
-#include <open3d/geometry/PointCloud.h>
-#include <open3d/geometry/RGBDImage.h>
-#include <open3d/io/ImageIO.h>
-#include <open3d/t/io/ImageIO.h>
-#include <open3d/utility/Helper.h>
-#include <open3d/utility/IJsonConvertible.h>
-#include <open3d/visualization/gui/GLFWWindowSystem.h>
-#include <open3d/visualization/gui/Window.h>
 #include <tinyfiledialogs.h>
 #include <cstring>
 
@@ -49,10 +39,11 @@ void readBagFile() {
     t::io::RSBagReader bag_reader;
     bag_reader.Open("../archivos/secuencia.bag");
     auto metadata = bag_reader.GetMetadata();
+    /*
     Json::Value jsonMetadata;
     metadata.ConvertToJsonValue(jsonMetadata);
     std::cout << open3d::utility::JsonToString(jsonMetadata) << std::endl;
-
+    */
     // VENTANA
     visualization::VisualizerWithKeyCallback vis;
     visualization::SetGlobalColorMap(
