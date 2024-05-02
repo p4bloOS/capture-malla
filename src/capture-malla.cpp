@@ -1,9 +1,17 @@
 #include "open3d/Open3D.h"
 #include <GLFW/glfw3.h>
+#include <iostream>
 #include <open3d/geometry/PointCloud.h>
 #include <open3d/geometry/RGBDImage.h>
 #include <open3d/geometry/TriangleMesh.h>
 #include <open3d/io/PointCloudIO.h>
+#include <open3d/pipelines/registration/ColoredICP.h>
+#include <open3d/pipelines/registration/Registration.h>
+#include <open3d/pipelines/registration/TransformationEstimation.h>
+#include <open3d/t/io/sensor/realsense/RealSenseSensor.h>
+#include <open3d/utility/Eigen.h>
+#include <open3d/visualization/utility/DrawGeometry.h>
+#include <ostream>
 #include <tinyfiledialogs.h>
 #include <cstring>
 #include <numeric>
@@ -314,22 +322,49 @@ std::shared_ptr<open3d::geometry::TriangleMesh> createMeshFromPointCloud(
 
 }
 
-void instantCapture() {
+
+/**
+ * Inicializa la Realsense con la configuración más óptima para el escaneo
+ */
+void initRealsense(open3d::t::io::RealSenseSensor & sensor) {
     using namespace open3d;
 
     // Apertura de la RealSense
-    std::unordered_map<std::string, std::string> configValues =
+    static const std::unordered_map<std::string, std::string> configValues =
     {
         {"serial", ""}, // Se escoge el primer dispositivo disponible
         {"color_format", "RS2_FORMAT_ANY"}, // Formato de pixel para fotogramas de color
-        {"color_resolution", "0,0"}, // RealSense escogerá la resolución (la máxima)
+        {"color_resolution", "640,480"}, // RealSense escogerá la resolución (la máxima)
         {"depth_format", "RS2_FORMAT_ANY"}, // Formato de pixel para fotogramas de profundidad
-        {"depth_resolution", "0,0"}, // RealSense escogerá la resolución (la máxima)
-        {"fps", "30"}, // Tasa de fotogramas para color y profundidad
+        {"depth_resolution", "640,480"}, // RealSense escogerá la resolución (la máxima)
+        {"fps", "10"}, // Tasa de fotogramas para color y profundidad
         {"visual_preset", "RS2_SR300_VISUAL_PRESET_OBJECT_SCANNING"} // Preset por optimizado para el escaneo
     };
+    sensor.InitSensor(t::io::RealSenseSensorConfig(configValues), 0);
+
+}
+
+
+
+void preprocessPointCloud(open3d::geometry::PointCloud & pc, double voxelSize, bool computeNormals=false) {
+    using namespace open3d;
+
+    pc = *pc.VoxelDownSample(voxelSize);
+    //pc.EstimateNormals();
+    //pc.OrientNormalsTowardsCameraLocation();
+    if (computeNormals)
+        pc.EstimateNormals(geometry::KDTreeSearchParamHybrid(voxelSize * 2, 30));
+
+}
+
+
+
+void instantCapture() {
+    using namespace open3d;
+
     t::io::RealSenseSensor rs;
-    rs.InitSensor(t::io::RealSenseSensorConfig(configValues), 0);
+    initRealsense(rs);
+
     auto metadata = rs.GetMetadata();
     rs.StartCapture();
 
@@ -375,9 +410,10 @@ void instantCapture() {
     } else {
         std::cerr << "Error guardando la nube de puntos" << std::endl;
     }
-    (*pointCloudPtr).EstimateNormals();
+    preprocessPointCloud(*pointCloudPtr, 0.01);
+    // (*pointCloudPtr).EstimateNormals();
     // (*pointCloud).OrientNormalsConsistentTangentPlane(4); // La mejor orientación de normales, peor es MUY costosa
-    (*pointCloudPtr).OrientNormalsTowardsCameraLocation();
+    // (*pointCloudPtr).OrientNormalsTowardsCameraLocation();
 
     auto meshPtr = createMeshFromPointCloud(pointCloudPtr);
 
@@ -394,6 +430,191 @@ void instantCapture() {
 
 
 
+Eigen::Matrix4d_u simpleICPRegistration(open3d::geometry::PointCloud & source, open3d::geometry::PointCloud & target) {
+    using namespace open3d;
+
+    auto registrationResult = pipelines::registration::RegistrationICP(
+            source,
+            target,
+            0.1,
+            Eigen::Matrix4d::Identity(),
+            // variante del algoritmo más veloz que por defecto point to point:
+            pipelines::registration::TransformationEstimationPointToPlane()
+        );
+     return registrationResult.transformation_;
+}
+
+
+Eigen::Matrix4d_u optimusICPRegistration(open3d::geometry::PointCloud source, open3d::geometry::PointCloud target, bool fast) {
+    using namespace open3d;
+
+
+    const  static double voxelRadius [] = {0.04, 0.02, 0.01};
+    const static int maxIter [] = {50, 30, 14};
+    Eigen::Matrix4d_u currentTransformation = Eigen::Matrix4d::Identity();
+    int times;
+    if (fast)
+        times = 2;
+    else
+        times = 3;
+
+    for (int i = 0; i<times; i++) {
+        auto vr = voxelRadius[i];
+        auto mi = maxIter[i];
+        auto sourceDown = source;
+        auto targetDown = target;
+        preprocessPointCloud(sourceDown, vr);
+        preprocessPointCloud(targetDown, vr);
+        auto registrationResult = pipelines::registration::RegistrationColoredICP(
+            sourceDown,
+            targetDown,
+            vr,
+            currentTransformation,
+            pipelines::registration::TransformationEstimationForColoredICP(),
+            pipelines::registration::ICPConvergenceCriteria(1e-6, 1e-6, mi)
+        );
+        currentTransformation = registrationResult.transformation_;
+    };
+    return currentTransformation;
+
+}
+
+
+open3d::geometry::PointCloud mergePointCloudsICP(std::vector<open3d::geometry::PointCloud> & pointClouds, bool fast) {
+    // Aplicación del algoritmo de registración a todas las nubes teniendo la primera como base
+
+    double voxelSize;
+    if (fast)
+        voxelSize = 0.02;
+    else
+        voxelSize = 0.01;
+
+    auto half1 = pointClouds[0];
+    for (int i = 1; i < pointClouds.size() /2; i++)
+    {
+        std::cout << "*Empezando registración " << i <<std::endl;
+        Eigen::Matrix4d_u transformation;
+        try{
+            transformation = optimusICPRegistration(half1, pointClouds[i], fast);
+        } catch (const std::exception& ex) {
+            std::cerr << ex.what() << std::endl
+                << "No se ha podido registrar una nube. Omitiendo." << std::endl;
+            continue;
+        }
+        half1.Transform(transformation);
+        half1 += pointClouds[i];
+        preprocessPointCloud(half1, voxelSize);
+    }
+
+    auto half2 = pointClouds[pointClouds.size() -1];
+    for (int i = pointClouds.size() - 2; i >= pointClouds.size() / 2; i--)
+    {
+        std::cout << "*Empezando registración " << i <<std::endl;
+        Eigen::Matrix4d_u transformation;
+        try{
+            transformation = optimusICPRegistration(half2, pointClouds[i], fast);
+        } catch (const std::exception& ex) {
+            std::cerr << ex.what() << std::endl
+                << "No se ha podido registrar una nube. Omitiendo." << std::endl;
+            continue;
+        }
+        half2.Transform(transformation);
+        half2 += pointClouds[i];
+        preprocessPointCloud(half2, voxelSize);
+    }
+
+    std::cout << "Fusión de las mitades " <<std::endl;
+    Eigen::Matrix4d_u transformation;
+    try{
+        transformation = optimusICPRegistration(half1, half2, fast);
+        half1.Transform(transformation);
+        half1 += half2;
+    } catch (const std::exception& ex) {
+        std::cerr << ex.what() << std::endl
+            << "No se ha podido registrar una nube. ERROR." << std::endl;
+    }
+
+    preprocessPointCloud(half1, voxelSize);
+
+    return half1;
+}
+
+
+
+void scanScene(int frames, bool fast) {
+    using namespace open3d;
+
+    t::io::RealSenseSensor rs;
+    initRealsense(rs);
+
+    auto metadata = rs.GetMetadata();
+    rs.StartCapture();
+
+
+    // CREACIÓN DE LA VENTANA
+    visualization::VisualizerWithKeyCallback vis;
+    visualization::SetGlobalColorMap(
+            visualization::ColorMap::ColorMapOption::Gray);
+    bool flag_exit = false;
+    vis.RegisterKeyCallback(GLFW_KEY_ESCAPE,
+                            [&](visualization::Visualizer *vis) {
+                                flag_exit = true;
+                                return true;
+                            });
+    vis.CreateVisualizerWindow("Instant Capture");
+    bool flag_capture;
+    vis.RegisterKeyCallback(GLFW_KEY_ENTER,
+                            [&](visualization::Visualizer *vis) {
+                                flag_capture = true;
+                                return true;
+                            });
+
+
+    // Visualización en tiempo real de la cámara
+    auto imgRGBD = rs.CaptureFrame(true, true).ToLegacy();
+    auto imRGBDPtr = std::shared_ptr<geometry::RGBDImage>(
+            &imgRGBD, [](geometry::RGBDImage *) {});
+    vis.AddGeometry(imRGBDPtr);
+
+    // Temporización (5 nubes/s, 10 nubes totales)
+    const auto frame_interval = std::chrono::duration<double>(1. / 4.0);
+    auto last_frame_time = std::chrono::steady_clock::now();
+    int remainingPointClouds = frames;
+
+    // Vector de nubes de puntos
+    std::vector<geometry::PointCloud> pointClouds {};
+
+    while(!flag_exit && remainingPointClouds > 0) {
+        if (flag_capture) {
+            auto pointCloud = *createPointCloudFromRGBD(imgRGBD, metadata);
+            pointCloud.EstimateNormals();
+            pointCloud.OrientNormalsTowardsCameraLocation();
+            pointClouds.push_back(pointCloud);
+            remainingPointClouds--;
+        }
+
+        vis.UpdateGeometry();
+        vis.UpdateRender();
+        std::this_thread::sleep_until(last_frame_time + frame_interval);
+        last_frame_time = std::chrono::steady_clock::now();
+        imgRGBD = rs.CaptureFrame(true, true).ToLegacy();
+        vis.PollEvents();
+    }
+    rs.StopCapture();
+
+    if (flag_exit) return;// Cierre del programa si se ha pulsado ESC
+
+    auto mergedPointCloud = std::make_shared<geometry::PointCloud>(
+        mergePointCloudsICP(pointClouds, fast)
+    );
+
+    visualization::DrawGeometries({mergedPointCloud}, "Escaneo");
+    auto mesh = createMeshFromPointCloud(mergedPointCloud);
+    visualization::DrawGeometries({mesh}, "Malla escaneada");
+
+
+
+}
 
 
 
@@ -404,6 +625,7 @@ int main(int argc, char *argv[]) {
     // visualizeMesh();
     // createGui();
     // requestFileToSave();
-    instantCapture();
+    // instantCapture();
+    scanScene(80, false); // 4 frames por segundo
     return 0;
 }
