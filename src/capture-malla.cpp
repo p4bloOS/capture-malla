@@ -1,26 +1,57 @@
-#include "open3d/Open3D.h"
-#include <GLFW/glfw3.h>
-#include <iostream>
-#include <open3d/geometry/PointCloud.h>
-#include <open3d/geometry/RGBDImage.h>
-#include <open3d/geometry/TriangleMesh.h>
-#include <open3d/io/PointCloudIO.h>
-#include <open3d/pipelines/registration/ColoredICP.h>
-#include <open3d/pipelines/registration/Registration.h>
-#include <open3d/pipelines/registration/TransformationEstimation.h>
-#include <open3d/t/io/sensor/realsense/RealSenseSensor.h>
-#include <open3d/utility/Eigen.h>
-#include <open3d/visualization/utility/DrawGeometry.h>
-#include <ostream>
-#include <tinyfiledialogs.h>
-#include <cstring>
-#include <numeric>
+#include "capture-malla.hpp"
+
+bool flagExit = false;
+bool flagRunOption = false;
+Option option = None;
 
 
-/*
- * Produce una grabación usando la cámara Intel RealSense. Grabará 2 segundos (60 fotogramas), y
- * el resultado se almacena un archivo ".bag", el cual contendrá datos de color y profundidad.
- * */
+void registerCallbacks(open3d::visualization::VisualizerWithKeyCallback & vis) {
+    using namespace open3d;
+
+    vis.RegisterKeyCallback(GLFW_KEY_ESCAPE,
+                            [&](visualization::Visualizer *vis) {
+                                flagExit = true;
+                                return true;
+                            });
+
+    vis.RegisterKeyCallback(GLFW_KEY_Q,
+                            [&](visualization::Visualizer *vis) {
+                                flagRunOption = true;
+                                option = Scan10sFast;
+                                return true;
+                            });
+
+    vis.RegisterKeyCallback(GLFW_KEY_W,
+                        [&](visualization::Visualizer *vis) {
+                            flagRunOption = true;
+                            option = Scan10sDetail;
+                            return true;
+                        });
+
+    vis.RegisterKeyCallback(GLFW_KEY_E,
+                            [&](visualization::Visualizer *vis) {
+                                flagRunOption = true;
+                                option = Scan30sFast;
+                                return true;
+                            });
+
+    vis.RegisterKeyCallback(GLFW_KEY_R,
+                            [&](visualization::Visualizer *vis) {
+                                flagRunOption = true;
+                                option = Scan30sDetail;
+                                return true;
+                            });
+
+    vis.RegisterKeyCallback(GLFW_KEY_ENTER,
+                        [&](visualization::Visualizer *vis) {
+                            flagRunOption = true;
+                            option = InstantCapture;
+                            return true;
+                        });
+
+};
+
+
 void realsenseRecord() {
     using namespace open3d::t;
     std::unordered_map<std::string, std::string> configValues =
@@ -116,11 +147,6 @@ void readBagFile() {
 }
 
 
-
-/*
- * Visualiza una malla 3D que se se encuentra en un archivo con un formato de malla 3D válido,
- * en este caso PLY.
- */
 void visualizeMesh() {
 
     using namespace open3d;
@@ -218,10 +244,6 @@ void createGui( ) {
 }
 
 
-/**
- * Abre un diálogo para solicitar la ruta donde se guardará un archivo ".ply".
- * Retorna la ruta elegida, o cadena vacía si el usuario ha cancelado.
- */
 std::string requestFileToSave() {
 
     const char * filterPatterns[2] = {"*.ply", "*.PLY"};
@@ -253,10 +275,7 @@ std::string requestFileToSave() {
 }
 
 
-/**
- * Retorna un shared_ptr a una nube de puntos que se crea a partir de la imagen RGBD,
- * teniendo en cuenta las características de la cámara.
- */
+
 std::shared_ptr<open3d::geometry::PointCloud> createPointCloudFromRGBD(
     open3d::geometry::RGBDImage & imgRGBD,
     open3d::t::io::RGBDVideoMetadata & metadata
@@ -286,11 +305,7 @@ std::shared_ptr<open3d::geometry::PointCloud> createPointCloudFromRGBD(
     return geometry::PointCloud::CreateFromRGBDImage(*imgPointCloud, metadata.intrinsics_, correctOrientation);
 }
 
-/*
- * Lanza el algoritmo Poisson para crear una malla 3D a partir de una nube de puntos
- * (es el que mejor resultado nos ha dado). Se asume que la nube de puntos tiene normales,
- * La consistencia de las normales afectará a la calidad de la malla resultante.
- */
+
 std::shared_ptr<open3d::geometry::TriangleMesh> createMeshFromPointCloud(
     std::shared_ptr<open3d::geometry::PointCloud> & pointCloud
 )
@@ -323,9 +338,7 @@ std::shared_ptr<open3d::geometry::TriangleMesh> createMeshFromPointCloud(
 }
 
 
-/**
- * Inicializa la Realsense con la configuración más óptima para el escaneo
- */
+
 void initRealsense(open3d::t::io::RealSenseSensor & sensor) {
     using namespace open3d;
 
@@ -346,7 +359,7 @@ void initRealsense(open3d::t::io::RealSenseSensor & sensor) {
 
 
 
-void preprocessPointCloud(open3d::geometry::PointCloud & pc, double voxelSize, bool computeNormals=false) {
+void preprocessPointCloud(open3d::geometry::PointCloud & pc, double voxelSize, bool computeNormals) {
     using namespace open3d;
 
     pc = *pc.VoxelDownSample(voxelSize);
@@ -354,77 +367,6 @@ void preprocessPointCloud(open3d::geometry::PointCloud & pc, double voxelSize, b
     //pc.OrientNormalsTowardsCameraLocation();
     if (computeNormals)
         pc.EstimateNormals(geometry::KDTreeSearchParamHybrid(voxelSize * 2, 30));
-
-}
-
-
-
-void instantCapture() {
-    using namespace open3d;
-
-    t::io::RealSenseSensor rs;
-    initRealsense(rs);
-
-    auto metadata = rs.GetMetadata();
-    rs.StartCapture();
-
-
-    // CREACIÓN DE LA VENTANA
-    visualization::VisualizerWithKeyCallback vis;
-    visualization::SetGlobalColorMap(
-            visualization::ColorMap::ColorMapOption::Gray);
-    bool flag_exit = false;
-    vis.RegisterKeyCallback(GLFW_KEY_ESCAPE,
-                            [&](visualization::Visualizer *vis) {
-                                flag_exit = true;
-                                return true;
-                            });
-    vis.CreateVisualizerWindow("Instant Capture");
-    bool flag_capture;
-    vis.RegisterKeyCallback(GLFW_KEY_ENTER,
-                            [&](visualization::Visualizer *vis) {
-                                flag_capture = true;
-                                return true;
-                            });
-
-
-    // Visualización en tiempo real de la cámara
-    auto imgRGBD = rs.CaptureFrame(true, true).ToLegacy();
-    auto imRGBDPtr = std::shared_ptr<geometry::RGBDImage>(
-            &imgRGBD, [](geometry::RGBDImage *) {});
-    vis.AddGeometry(imRGBDPtr);
-    while(!flag_capture && !flag_exit) {
-        imgRGBD = rs.CaptureFrame(true, true).ToLegacy();
-        vis.UpdateGeometry();
-        vis.UpdateRender();
-        vis.PollEvents();
-    }
-    rs.StopCapture();
-
-    if (flag_exit) return; // Cierre del programa si se ha pulsado ESC
-
-    auto pointCloudPtr = createPointCloudFromRGBD(imgRGBD, metadata);
-    bool writePointCloudSuccess = io::WritePointCloud("../archivos/nube_de_puntos.ply", *pointCloudPtr);
-    if (writePointCloudSuccess) {
-        std::cout << "Nube de puntos guardada" << std::endl;
-    } else {
-        std::cerr << "Error guardando la nube de puntos" << std::endl;
-    }
-    preprocessPointCloud(*pointCloudPtr, 0.01);
-    // (*pointCloudPtr).EstimateNormals();
-    // (*pointCloud).OrientNormalsConsistentTangentPlane(4); // La mejor orientación de normales, peor es MUY costosa
-    // (*pointCloudPtr).OrientNormalsTowardsCameraLocation();
-
-    auto meshPtr = createMeshFromPointCloud(pointCloudPtr);
-
-    if (io::WriteTriangleMesh("../archivos/malla.ply", *meshPtr)) {
-        std::cout << "Malla bien" <<std::endl;
-    } else {
-        std::cerr << "Malla mal" << std::endl;
-    };
-
-    visualization::DrawGeometries({meshPtr}, "Malla");
-    visualization::DrawGeometries({pointCloudPtr}, "Nube de puntos");
 
 }
 
@@ -541,34 +483,57 @@ open3d::geometry::PointCloud mergePointCloudsICP(std::vector<open3d::geometry::P
 
 
 
-void scanScene(int frames, bool fast) {
+
+void instantCapture(open3d::t::io::RealSenseSensor & rs,
+                    open3d::visualization::VisualizerWithKeyCallback & vis,
+                    open3d::t::io::RGBDVideoMetadata & metadata)
+{
     using namespace open3d;
 
-    t::io::RealSenseSensor rs;
-    initRealsense(rs);
 
-    auto metadata = rs.GetMetadata();
-    rs.StartCapture();
+    // Visualización en tiempo real de la cámara
+    auto imgRGBD = rs.CaptureFrame(true, true).ToLegacy();
+    auto imRGBDPtr = std::shared_ptr<geometry::RGBDImage>(
+            &imgRGBD, [](geometry::RGBDImage *) {});
+
+    auto pointCloudPtr = createPointCloudFromRGBD(imgRGBD, metadata);
+    bool writePointCloudSuccess = io::WritePointCloud("../archivos/nube_de_puntos.ply", *pointCloudPtr);
+    if (writePointCloudSuccess) {
+        std::cout << "Nube de puntos guardada" << std::endl;
+    } else {
+        std::cerr << "Error guardando la nube de puntos" << std::endl;
+    }
+    preprocessPointCloud(*pointCloudPtr, 0.01);
+    (*pointCloudPtr).EstimateNormals();
+    // (*pointCloud).OrientNormalsConsistentTangentPlane(4); // La mejor orientación de normales, peor es MUY costosa
+    (*pointCloudPtr).OrientNormalsTowardsCameraLocation();
+
+    auto meshPtr = createMeshFromPointCloud(pointCloudPtr);
+
+    if (io::WriteTriangleMesh("../archivos/malla.ply", *meshPtr)) {
+        std::cout << "Malla bien" <<std::endl;
+    } else {
+        std::cerr << "Malla mal" << std::endl;
+    };
+
+    visualization::DrawGeometries({meshPtr}, "Malla");
+    visualization::DrawGeometries({pointCloudPtr}, "Nube de puntos");
+
+}
 
 
-    // CREACIÓN DE LA VENTANA
-    visualization::VisualizerWithKeyCallback vis;
-    visualization::SetGlobalColorMap(
-            visualization::ColorMap::ColorMapOption::Gray);
-    bool flag_exit = false;
-    vis.RegisterKeyCallback(GLFW_KEY_ESCAPE,
-                            [&](visualization::Visualizer *vis) {
-                                flag_exit = true;
-                                return true;
-                            });
-    vis.CreateVisualizerWindow("Instant Capture");
-    bool flag_capture;
-    vis.RegisterKeyCallback(GLFW_KEY_ENTER,
-                            [&](visualization::Visualizer *vis) {
-                                flag_capture = true;
-                                return true;
-                            });
 
+
+void scanScene(open3d::t::io::RealSenseSensor & rs,
+               open3d::visualization::VisualizerWithKeyCallback & vis,
+               open3d::t::io::RGBDVideoMetadata & metadata,
+               int frames,
+               bool fast)
+{
+    using namespace open3d;
+
+
+    vis.ClearGeometries();
 
     // Visualización en tiempo real de la cámara
     auto imgRGBD = rs.CaptureFrame(true, true).ToLegacy();
@@ -576,7 +541,7 @@ void scanScene(int frames, bool fast) {
             &imgRGBD, [](geometry::RGBDImage *) {});
     vis.AddGeometry(imRGBDPtr);
 
-    // Temporización (5 nubes/s, 10 nubes totales)
+    // Temporización (4 nubes/s)
     const auto frame_interval = std::chrono::duration<double>(1. / 4.0);
     auto last_frame_time = std::chrono::steady_clock::now();
     int remainingPointClouds = frames;
@@ -584,15 +549,16 @@ void scanScene(int frames, bool fast) {
     // Vector de nubes de puntos
     std::vector<geometry::PointCloud> pointClouds {};
 
-    while(!flag_exit && remainingPointClouds > 0) {
-        if (flag_capture) {
-            auto pointCloud = *createPointCloudFromRGBD(imgRGBD, metadata);
-            pointCloud.EstimateNormals();
-            pointCloud.OrientNormalsTowardsCameraLocation();
-            pointClouds.push_back(pointCloud);
-            remainingPointClouds--;
-        }
+    while(remainingPointClouds > 0) {
 
+        // Generación de la nube de puntos
+        auto pointCloud = *createPointCloudFromRGBD(imgRGBD, metadata);
+        pointCloud.EstimateNormals();
+        pointCloud.OrientNormalsTowardsCameraLocation();
+        pointClouds.push_back(pointCloud);
+        remainingPointClouds--;
+
+        // Captura y visualización del frame
         vis.UpdateGeometry();
         vis.UpdateRender();
         std::this_thread::sleep_until(last_frame_time + frame_interval);
@@ -602,7 +568,7 @@ void scanScene(int frames, bool fast) {
     }
     rs.StopCapture();
 
-    if (flag_exit) return;// Cierre del programa si se ha pulsado ESC
+    // if (flagExit) return; // Cierre del programa si se ha pulsado ESC
 
     auto mergedPointCloud = std::make_shared<geometry::PointCloud>(
         mergePointCloudsICP(pointClouds, fast)
@@ -613,19 +579,89 @@ void scanScene(int frames, bool fast) {
     visualization::DrawGeometries({mesh}, "Malla escaneada");
 
 
-
 }
 
 
 
 int main(int argc, char *argv[]) {
-    open3d::t::io::RealSenseSensor::ListDevices();
     // realsenseRecord();
     // readBagFile();
     // visualizeMesh();
     // createGui();
     // requestFileToSave();
     // instantCapture();
-    scanScene(80, false); // 4 frames por segundo
+    // scanScene(40, true); // 4 frames por segundo
+    using namespace open3d;
+    open3d::t::io::RealSenseSensor::ListDevices();
+
+    t::io::RealSenseSensor rs;
+    initRealsense(rs);
+    auto metadata = rs.GetMetadata();
+    rs.StartCapture();
+
+    // CREACIÓN DE LA VENTANA
+    visualization::VisualizerWithKeyCallback vis;
+    visualization::SetGlobalColorMap(
+            visualization::ColorMap::ColorMapOption::Gray);
+    registerCallbacks(vis);
+    vis.CreateVisualizerWindow("CaptureMalla");
+
+
+    // Visualización en tiempo real de la cámara
+    auto imgRGBD = rs.CaptureFrame(true, true).ToLegacy();
+    auto imRGBDPtr = std::shared_ptr<geometry::RGBDImage>(
+            &imgRGBD, [](geometry::RGBDImage *) {});
+    vis.AddGeometry(imRGBDPtr);
+
+    // Temporización (10 fps)
+    const auto frame_interval = std::chrono::duration<double>(1. / 10.0);
+    auto last_frame_time = std::chrono::steady_clock::now();
+
+
+    while(!flagExit && !flagRunOption > 0) {
+
+        vis.UpdateGeometry();
+        vis.UpdateRender();
+        std::this_thread::sleep_until(last_frame_time + frame_interval);
+        last_frame_time = std::chrono::steady_clock::now();
+        imgRGBD = rs.CaptureFrame(true, true).ToLegacy();
+        vis.PollEvents();
+    }
+
+
+    if (flagExit) return 0;// Cierre del programa si se ha pulsado ESC
+
+    switch (option) {
+        case InstantCapture :
+            std::cout << "Captura instantánea" << std::endl;
+            instantCapture(rs, vis, metadata);
+            break;
+
+        case Scan10sFast :
+            std::cout << "Scanner de 10 segundos, modo velocidad" << std::endl;
+            scanScene(rs, vis, metadata, 40, true);
+            break;
+
+        case Scan10sDetail:
+            std::cout << "Scanner de 10 segundos, modo detalle" << std::endl;
+            scanScene(rs, vis, metadata, 40, false);
+            break;
+
+        case Scan30sFast:
+            std::cout << "Scanner de 30 segundos, modo velocidad" << std::endl;
+            scanScene(rs, vis, metadata, 120, true);
+            break;
+
+        case Scan30sDetail:
+            std::cout << "Scanner de 30 segundos, modo detalle" << std::endl;
+            scanScene(rs, vis, metadata, 120, false);
+            break;
+        default:
+            std::cerr << "Error seleccionando la opción" << std::endl;
+            break;
+    }
+
+    rs.StopCapture();
+
     return 0;
 }
