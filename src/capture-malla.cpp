@@ -11,13 +11,6 @@ bool panelIsVisible;
 
 
 int main(int argc, char *argv[]) {
-    // realsenseRecord();
-    // readBagFile();
-    // visualizeMesh();
-    // createGui();
-    // requestFileToSave();
-    // instantCapture();
-    // scanScene(40, true); // 4 frames por segundo
     using namespace open3d;
 
     // Inicialización del panel de ayuda (es una malla ubicada en assets)
